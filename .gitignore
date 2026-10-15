@@ -1,0 +1,22 @@
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+# Local camera settings and secrets
+config.json
+config.json.tmp
+.env
+.env.*
+!.env.example
+# Capture outputs and temporary previews
+_roi_preview_*.bmp
+_raw_cam*.bmp
+CameraCaptures/
+captures/
+*.log
+# Editor / OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

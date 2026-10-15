@@ -1,0 +1,48 @@
+{
+  "save_root": "D:/CameraCaptures",
+  "save_metadata": false,
+  "frame_timeout_ms": 8000,
+  "pre_trigger_delay_ms": 0,
+  "preview_enabled": true,
+  "cameras": [
+    {
+      "serial": "CAMERA_1_SERIAL",
+      "name": "Camera 1",
+      "exposure_us": 15000.0,
+      "gain_db": null,
+      "trigger_delay_us": 0,
+      "roi": [
+        612,
+        1384,
+        397,
+        417
+      ]
+    },
+    {
+      "serial": "CAMERA_2_SERIAL",
+      "name": "Camera 2",
+      "exposure_us": 15000.0,
+      "gain_db": null,
+      "trigger_delay_us": 0,
+      "roi": [
+        2400,
+        2116,
+        270,
+        243
+      ]
+    },
+    {
+      "serial": "CAMERA_3_SERIAL",
+      "name": "Camera 3",
+      "exposure_us": 15000.0,
+      "gain_db": null,
+      "trigger_delay_us": 0,
+      "roi": [
+        2931,
+        1666,
+        351,
+        317
+      ]
+    }
+  ]
+}
