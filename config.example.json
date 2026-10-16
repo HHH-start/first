@@ -16,7 +16,8 @@
         1384,
         397,
         417
-      ]
+      ],
+      "save_dir": "D:/CameraCaptures/left"
     },
     {
       "serial": "CAMERA_2_SERIAL",
@@ -29,7 +30,8 @@
         2116,
         270,
         243
-      ]
+      ],
+      "save_dir": "D:/CameraCaptures/mid"
     },
     {
       "serial": "CAMERA_3_SERIAL",
@@ -42,7 +44,8 @@
         1666,
         351,
         317
-      ]
+      ],
+      "save_dir": "D:/CameraCaptures/right"
     }
   ]
 }

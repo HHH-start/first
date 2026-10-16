@@ -13,6 +13,7 @@ from MvCameraControl_class import *
 from CameraParams_header import MV_CC_DEVICE_INFO_LIST, MV_CC_DEVICE_INFO
 from MvErrorDefine_const import *
 from CamOperation_OneClick import CameraOperation
+from capture_storage import CAMERA_ROLES, CaptureStorage, camera_directories
 
 HERE=Path(__file__).resolve().parent
 CONFIG=HERE/'config.json'
@@ -103,7 +104,7 @@ class CameraPanel(QFrame):
 
 class Studio(QMainWindow):
     def __init__(self):
-        super().__init__(); self.cfg=load_config(); self.devices=None; self.cams=[None]*3; self.ready=False; self.preview=False; self.busy=False; self.pending={}; self.saved={}; self.errors={}; self.frames={}; self.capture_dir=None
+        super().__init__(); self.cfg=load_config(); self.devices=None; self.cams=[None]*3; self.ready=False; self.preview=False; self.busy=False; self.pending={}; self.saved={}; self.errors={}; self.frames={}; self.batch=None; self.storage=CaptureStorage()
         self.setWindowTitle('TripleCam Studio | Industrial Capture'); self.resize(1470,900)
         root=QWidget(); self.setCentralWidget(root); main=QVBoxLayout(root); main.setSpacing(14); main.setContentsMargins(22,18,22,18)
         header=QHBoxLayout(); title=QLabel('TripleCam Studio'); title.setObjectName('appTitle'); header.addWidget(title); header.addStretch()
@@ -118,9 +119,14 @@ class Studio(QMainWindow):
             item=self.cfg['cameras'][i]; p.name.setText(item['name']); p.exp.setValue(item['exposure_us']); p.roi_status.setText(self.roi_text(item.get('roi')))
             p.name.editingFinished.connect(lambda slot=i:self.persist_name(slot))
         main.addLayout(grid,5)
-        foot=QHBoxLayout(); foot.addWidget(QLabel('保存到')); self.path=QLineEdit(self.cfg['save_root']); foot.addWidget(self.path,1)
-        browse=QPushButton('选择目录'); browse.clicked.connect(self.choose_folder); foot.addWidget(browse)
-        self.result=QLabel('等待拍照'); foot.addWidget(self.result); main.addLayout(foot)
+        self.save_paths=[]; self.folder_buttons=[]
+        for i,directory in enumerate(camera_directories(self.cfg)):
+            row=QHBoxLayout(); row.addWidget(QLabel('Camera %d · %s 保存到'%(i+1,CAMERA_ROLES[i])))
+            path=QLineEdit(directory); self.save_paths.append(path); row.addWidget(path,1)
+            path.editingFinished.connect(lambda slot=i:self.persist_folder(slot))
+            browse=QPushButton('选择目录'); browse.clicked.connect(lambda checked=False,slot=i:self.choose_folder(slot))
+            self.folder_buttons.append(browse); row.addWidget(browse); main.addLayout(row)
+        self.result=QLabel('等待拍照'); main.addWidget(self.result)
         self.log=QTextEdit(); self.log.setReadOnly(True); self.log.setMaximumHeight(130); main.addWidget(self.log,1)
         self.setStyleSheet('''QMainWindow,QWidget{background:#f3f6fa;color:#253248;font-family:"Microsoft YaHei";font-size:13px}
         QFrame#cameraPanel{background:white;border:1px solid #dce4ef;border-radius:13px}
@@ -135,9 +141,20 @@ class Studio(QMainWindow):
     def roi_text(self,roi): return 'ROI: %s'%(('Full Frame' if not roi else '%d × %d'%(roi[2],roi[3])))
     def persist_name(self,slot):
         name=self.panels[slot].name.text().strip() or ('Camera %d'%(slot+1)); self.cfg['cameras'][slot]['name']=name; save_config(self.cfg); self.panels[slot].title.setText(name)
-    def choose_folder(self):
-        d=QFileDialog.getExistingDirectory(self,'选择保存目录',self.path.text());
-        if d: self.path.setText(d); self.cfg['save_root']=d; save_config(self.cfg)
+    def persist_folder(self,slot):
+        if self.busy:return
+        directory=self.save_paths[slot].text().strip()
+        if not directory:return
+        try:
+            self.cfg['cameras'][slot]['save_dir']=directory
+            save_config(self.cfg)
+        except Exception as e: QMessageBox.warning(self,'保存配置失败',str(e))
+    def choose_folder(self,slot):
+        d=QFileDialog.getExistingDirectory(self,'选择 %s 相机保存目录'%CAMERA_ROLES[slot],self.save_paths[slot].text())
+        if d:
+            self.save_paths[slot].setText(d); self.persist_folder(slot)
+    def enable_folder_controls(self,enabled):
+        for control in self.save_paths+self.folder_buttons:control.setEnabled(enabled)
     def enumerate(self):
         lst=MV_CC_DEVICE_INFO_LIST(); layers=(MV_GIGE_DEVICE|MV_USB_DEVICE|MV_GENTL_GIGE_DEVICE|MV_GENTL_CAMERALINK_DEVICE|MV_GENTL_CXP_DEVICE|MV_GENTL_XOF_DEVICE)
         ret=MvCamera.MV_CC_EnumDevicesEx2(layers,lst,'',SortMethod_SerialNumber)
@@ -221,25 +238,25 @@ class Studio(QMainWindow):
         except Exception as e: QMessageBox.warning(self,'ROI Editor',str(e))
     def capture_once(self):
         if not self.ready or self.preview or self.busy:return
-        root=self.path.text().strip()
+        directories=[path.text().strip() for path in self.save_paths]
         try:
-            # Native SDK SaveImageToFileEx currently expects ASCII path.
-            root.encode('ascii'); os.makedirs(root,exist_ok=True)
-            if not os.access(root,os.W_OK): raise RuntimeError('保存目录不可写')
-            folder=datetime.now().strftime('%Y%m%d_%H%M%S_%f')
-            self.capture_dir=os.path.join(root,folder); os.makedirs(self.capture_dir)
+            # Check all destinations before triggering any camera.
+            for entry,directory in zip(self.cfg['cameras'],directories):entry['save_dir']=directory
+            save_config(self.cfg)
+            self.batch=self.storage.prepare(directories)
         except Exception as e: QMessageBox.warning(self,'保存目录错误',str(e)); return
-        self.cfg['save_root']=root; save_config(self.cfg)
         self.busy=True; self.capture.setEnabled(False); self.preview_button.setEnabled(False); self.configure.setEnabled(False)
+        self.enable_folder_controls(False)
         self.saved={}; self.errors={}; self.pending={}; self.frames={}
         for i,cam in enumerate(self.cams):
             with cam.buf_lock: self.frames[i]=cam.frame_count
         delay=max(0,int(self.cfg.get('pre_trigger_delay_ms',0)))
-        self.logline('开始采集 '+folder)
+        self.logline('开始采集 pic_%d（left / mid / right）'%self.batch.number)
         QTimer.singleShot(delay,self.issue_triggers)
     def issue_triggers(self):
         for i,cam in enumerate(self.cams):
-            ret=cam.trigger_once()
+            try: ret=cam.trigger_once()
+            except Exception as e:self.errors[i]='触发失败 '+str(e); continue
             if ret!=0:self.errors[i]='触发失败 '+hx(ret)
             else:self.pending[i]=cam
         self.started=time.monotonic(); QTimer.singleShot(50,self.poll_frames)
@@ -247,8 +264,10 @@ class Studio(QMainWindow):
         for i,cam in list(self.pending.items()):
             with cam.buf_lock: count=cam.frame_count; size=int(cam.st_frame_info.nFrameLen)
             if count<=self.frames[i] or size<=0:continue
-            temp=os.path.join(self.capture_dir,'_raw_cam%d.bmp'%(i+1))
-            ret=cam.save_bmp(temp,expected_frame_count=count)
+            temp=str(self.batch.temp_dir/('_raw_cam%d.bmp'%(i+1)))
+            try: ret=cam.save_bmp(temp,expected_frame_count=count)
+            except Exception as e:
+                self.pending.pop(i); self.errors[i]='SDK 保存失败 '+str(e); continue
             if ret==-2:continue
             self.pending.pop(i)
             if ret!=0 or not os.path.isfile(temp):self.errors[i]='SDK 保存失败 '+str(ret);continue
@@ -260,8 +279,9 @@ class Studio(QMainWindow):
                     x,y,w,h=roi
                     if x<0 or y<0 or w<=0 or h<=0 or x+w>image.width() or y+h>image.height():raise RuntimeError('ROI 超出图像范围')
                     image=image.copy(x,y,w,h)
-                output=os.path.join(self.capture_dir,'cam%d.bmp'%(i+1))
-                if not image.save(output,'BMP') or os.path.getsize(output)==0:raise RuntimeError('裁剪文件写入失败')
+                cropped=str(self.batch.temp_dir/('cropped_cam%d.bmp'%(i+1)))
+                if not image.save(cropped,'BMP') or os.path.getsize(cropped)==0:raise RuntimeError('裁剪文件写入失败')
+                output=self.batch.publish(i,cropped)
                 self.saved[i]=output; self.panels[i].last.setText('✓ '+str(image.width())+' × '+str(image.height()))
                 self.logline('Camera %d saved: %s'%(i+1,output))
             except Exception as e:self.errors[i]=str(e)
@@ -276,14 +296,19 @@ class Studio(QMainWindow):
     def finish_capture(self):
         ok=len(self.saved); failed=bool(self.errors)
         if self.cfg.get('save_metadata',False):
-            metadata={'time':datetime.now().isoformat(),'status':'failed' if failed else 'success','cameras':[]}
-            for i,entry in enumerate(self.cfg['cameras']):
-                metadata['cameras'].append({'serial':entry['serial'],'name':entry['name'],'exposure_us':entry['exposure_us'],'roi':entry.get('roi'),'file':os.path.basename(self.saved[i]) if i in self.saved else None,'error':self.errors.get(i)})
-            with open(os.path.join(self.capture_dir,'capture.json'),'w',encoding='utf-8') as f:json.dump(metadata,f,ensure_ascii=False,indent=2)
-        self.result.setText(('✓ 成功 ' if not failed else '⚠ 部分失败 ')+str(ok)+'/3')
-        self.logline('本次拍照：成功 %d/3，%s'%(ok,self.capture_dir))
-        if failed: QMessageBox.warning(self,'本批次采集失败','成功 %d/3\n'%ok+'\n'.join('Camera %d: %s'%(i+1,e) for i,e in self.errors.items()))
+            try:
+                metadata={'batch':self.batch.number,'time':datetime.now().isoformat(),'status':'failed' if failed else 'success','cameras':[]}
+                for i,entry in enumerate(self.cfg['cameras']):
+                    metadata['cameras'].append({'role':CAMERA_ROLES[i],'serial':entry['serial'],'name':entry['name'],'exposure_us':entry['exposure_us'],'roi':entry.get('roi'),'file':self.saved.get(i),'error':self.errors.get(i)})
+                with open(self.batch.roots[0]/('pic_%d_capture.json'%self.batch.number),'x',encoding='utf-8') as f:json.dump(metadata,f,ensure_ascii=False,indent=2)
+            except Exception as e:self.logline('采集记录保存失败（照片不受影响）: '+str(e))
+        self.result.setText(('✓ 成功 ' if not failed else '⚠ 部分失败 ')+str(ok)+'/3 · pic_%d'%self.batch.number)
+        self.logline('本次拍照 pic_%d：成功 %d/3'%(self.batch.number,ok))
+        try:self.batch.close()
+        except OSError as e:self.logline('临时文件清理失败: '+str(e))
         self.busy=False; self.capture.setEnabled(True); self.preview_button.setEnabled(True); self.configure.setEnabled(True)
+        self.enable_folder_controls(True)
+        if failed: QMessageBox.warning(self,'本批次采集失败','成功 %d/3\n'%ok+'\n'.join('Camera %d: %s'%(i+1,e) for i,e in self.errors.items()))
     def shutdown_cameras(self):
         self.ready=False; self.preview=False; self.capture.setEnabled(False); self.preview_button.setEnabled(False)
         for i,cam in enumerate(self.cams):
