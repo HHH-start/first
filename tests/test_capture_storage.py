@@ -21,14 +21,18 @@ class StorageTests(unittest.TestCase):
         batch = self.prepare()
         self.assertEqual(batch.number, 1)
         self.assertEqual([p.name for p in batch.outputs],
-                         ['pic_1_left.bmp', 'pic_1_mid.bmp', 'pic_1_right.bmp'])
+                         [f'pic_1_{batch.batch_id}_{role}.bmp' for role in ('left', 'mid', 'right')])
+        self.assertTrue(batch.batch_id.startswith('B'))
+        self.assertEqual(batch.metadata_path.name, f'pic_1_{batch.batch_id}_capture.json')
 
     def test_maximum_across_directories_and_restart(self):
-        self.prepare().close()
+        first = self.prepare()
+        first.close()
         (self.roots[0] / 'pic_1_left.bmp').touch()
         restarted = CaptureStorage().prepare(self.roots)
         self.addCleanup(restarted.close)
         self.assertEqual(restarted.number, 2)
+        self.assertEqual(restarted.batch_id, first.batch_id)
         (self.roots[1] / 'pic_10_mid.bmp').touch()
         (self.roots[2] / 'PIC_7_RIGHT.BMP').touch()
         (self.roots[0] / 'unrelated_999.bmp').touch()
@@ -47,8 +51,9 @@ class StorageTests(unittest.TestCase):
         following = CaptureStorage().prepare(self.roots)
         self.addCleanup(following.close)
         self.assertEqual(following.number, 2)
-        self.assertTrue((self.roots[0] / 'pic_1_left.bmp').exists())
-        self.assertFalse((self.roots[1] / 'pic_1_mid.bmp').exists())
+        self.assertEqual(following.batch_id, batch.batch_id)
+        self.assertTrue(batch.outputs[0].exists())
+        self.assertFalse(batch.outputs[1].exists())
 
     def test_all_failed_attempt_still_advances_in_session(self):
         self.prepare().close()
@@ -79,7 +84,20 @@ class StorageTests(unittest.TestCase):
         first = self.storage.prepare([self.roots[0]] * 3)
         self.addCleanup(first.close)
         self.assertEqual(len(set(first.outputs)), 3)
-        self.assertEqual(self.prepare().number, 1)
+        second = self.prepare()
+        self.assertEqual(second.number, 1)
+        self.assertNotEqual(first.batch_id, second.batch_id)
+        restarted = CaptureStorage().prepare([self.roots[0]] * 3)
+        self.addCleanup(restarted.close)
+        self.assertEqual(restarted.batch_id, first.batch_id)
+
+    def test_renamed_photos_are_numbered_and_batch_is_reused(self):
+        for root, role in zip(self.roots, ('left', 'mid', 'right')):
+            root.mkdir()
+            (root / f'pic_28_BCAM_20261017_7B69425C_{role}.bmp').touch()
+        batch = self.prepare()
+        self.assertEqual(batch.number, 29)
+        self.assertEqual(batch.batch_id, 'BCAM_20261017_7B69425C')
 
     def test_invalid_path_stops_before_capture(self):
         with self.assertRaises(ValueError):
