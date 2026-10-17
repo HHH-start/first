@@ -251,7 +251,7 @@ class Studio(QMainWindow):
         for i,cam in enumerate(self.cams):
             with cam.buf_lock: self.frames[i]=cam.frame_count
         delay=max(0,int(self.cfg.get('pre_trigger_delay_ms',0)))
-        self.logline('开始采集 pic_%d（left / mid / right）'%self.batch.number)
+        self.logline('开始采集 %s（left / mid / right）'%self.batch.file_stem)
         QTimer.singleShot(delay,self.issue_triggers)
     def issue_triggers(self):
         for i,cam in enumerate(self.cams):
@@ -297,13 +297,13 @@ class Studio(QMainWindow):
         ok=len(self.saved); failed=bool(self.errors)
         if self.cfg.get('save_metadata',False):
             try:
-                metadata={'batch':self.batch.number,'time':datetime.now().isoformat(),'status':'failed' if failed else 'success','cameras':[]}
+                metadata={'batch':self.batch.number,'batch_id':self.batch.batch_id,'time':datetime.now().isoformat(),'status':'failed' if failed else 'success','cameras':[]}
                 for i,entry in enumerate(self.cfg['cameras']):
                     metadata['cameras'].append({'role':CAMERA_ROLES[i],'serial':entry['serial'],'name':entry['name'],'exposure_us':entry['exposure_us'],'roi':entry.get('roi'),'file':self.saved.get(i),'error':self.errors.get(i)})
-                with open(self.batch.roots[0]/('pic_%d_capture.json'%self.batch.number),'x',encoding='utf-8') as f:json.dump(metadata,f,ensure_ascii=False,indent=2)
+                with open(self.batch.metadata_path,'x',encoding='utf-8') as f:json.dump(metadata,f,ensure_ascii=False,indent=2)
             except Exception as e:self.logline('采集记录保存失败（照片不受影响）: '+str(e))
-        self.result.setText(('✓ 成功 ' if not failed else '⚠ 部分失败 ')+str(ok)+'/3 · pic_%d'%self.batch.number)
-        self.logline('本次拍照 pic_%d：成功 %d/3'%(self.batch.number,ok))
+        self.result.setText(('✓ 成功 ' if not failed else '⚠ 部分失败 ')+str(ok)+'/3 · '+self.batch.file_stem)
+        self.logline('本次拍照 %s：成功 %d/3'%(self.batch.file_stem,ok))
         try:self.batch.close()
         except OSError as e:self.logline('临时文件清理失败: '+str(e))
         self.busy=False; self.capture.setEnabled(True); self.preview_button.setEnabled(True); self.configure.setEnabled(True)

@@ -88,29 +88,33 @@ class CaptureGuiTests(unittest.TestCase):
         self.addCleanup(restored.deleteLater)
         self.assertEqual(restored.save_paths[0].text(), str(custom))
         self.capture()
+        batch_id = self.window.batch.batch_id
         for i, role in enumerate(('left', 'mid', 'right')):
             directory = Path(self.window.save_paths[i].text())
-            output = directory / f'pic_1_{role}.bmp'
+            output = directory / f'pic_1_{batch_id}_{role}.bmp'
             image = QImage(str(output))
             self.assertEqual((image.width(), image.height()), (5, 4))
             self.assertFalse(any(p.is_dir() for p in directory.iterdir()))
-        metadata = json.loads((custom / 'pic_1_capture.json').read_text())
+        metadata = json.loads((custom / f'pic_1_{batch_id}_capture.json').read_text())
         self.assertEqual(metadata['batch'], 1)
-        self.assertEqual(metadata['cameras'][2]['file'], str(self.root / '2' / 'pic_1_right.bmp'))
+        self.assertEqual(metadata['batch_id'], batch_id)
+        self.assertEqual(metadata['cameras'][2]['file'], str(self.root / '2' / f'pic_1_{batch_id}_right.bmp'))
         (self.root / '2' / 'pic_10_right.bmp').write_bytes(b'old')
         self.capture()
-        self.assertTrue((custom / 'pic_11_left.bmp').exists())
+        self.assertTrue((custom / f'pic_11_{batch_id}_left.bmp').exists())
         self.assertFalse(self.warnings.called)
 
     def test_partial_failure_retains_success_and_batch_number(self):
         self.window.cams[1].failure = True
         self.capture()
-        self.assertTrue((self.root / '0' / 'pic_1_left.bmp').exists())
-        self.assertFalse((self.root / '1' / 'pic_1_mid.bmp').exists())
-        self.assertTrue((self.root / '2' / 'pic_1_right.bmp').exists())
+        first = self.window.batch
+        self.assertTrue(first.outputs[0].exists())
+        self.assertFalse(first.outputs[1].exists())
+        self.assertTrue(first.outputs[2].exists())
         self.window.cams[1].failure = False
         self.capture()
-        self.assertTrue((self.root / '1' / 'pic_2_mid.bmp').exists())
+        self.assertTrue(self.window.batch.outputs[1].exists())
+        self.assertEqual(self.window.batch.batch_id, first.batch_id)
         self.assertEqual(self.warnings.call_count, 1)
 
     def test_invalid_destination_does_not_trigger(self):
@@ -125,8 +129,12 @@ class CaptureGuiTests(unittest.TestCase):
     def test_metadata_failure_does_not_lock_ui_or_lose_photos(self):
         directory = self.root / '0'
         directory.mkdir()
-        (directory / 'pic_1_capture.json').write_text('keep this')
+        previous = self.window.storage.prepare([str(self.root / str(i)) for i in range(3)])
+        batch_id = previous.batch_id
+        previous.close()
+        target = directory / f'pic_2_{batch_id}_capture.json'
+        target.write_text('keep this')
         self.capture()
-        self.assertEqual((directory / 'pic_1_capture.json').read_text(), 'keep this')
-        self.assertTrue((directory / 'pic_1_left.bmp').exists())
+        self.assertEqual(target.read_text(), 'keep this')
+        self.assertTrue((directory / f'pic_2_{batch_id}_left.bmp').exists())
         self.assertTrue(self.window.capture.isEnabled())
